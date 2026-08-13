@@ -1,0 +1,1172 @@
+<template>
+    <div class="app">
+        <!-- ====== 顶栏 ====== -->
+        <header>
+            <div class="logo">
+                <img src="/icon.ico" alt="logo" class="logo-icon" />
+                <span class="title">ceciliobot</span>
+            </div>
+            <div class="status">
+                <span v-if="state.frameworkInstalled && state.hasToken" class="status-dot green"></span>
+                <span v-else class="status-dot red"></span>
+                <span class="status-text">
+                    {{ state.frameworkInstalled && state.hasToken ? 'Ready' : 'Not ready' }}
+                </span>
+                <button @click="openRoleManager" class="manage-btn">角色管理</button>
+                <!-- 夜间模式切换 -->
+                <button @click="toggleDarkMode" class="dark-toggle" :title="darkMode ? '切换到亮色' : '切换到暗色'">
+                    {{ darkMode ? '☀' : '🌙' }}
+                </button>
+            </div>
+        </header>
+
+        <!-- ====== 消息区域 ====== -->
+        <main ref="messagesContainer">
+            <div v-for="(msg, idx) in messages" :key="idx" class="message-wrapper">
+                <!-- 助手消息（左） -->
+                <div v-if="msg.role === 'assistant'" class="message assistant">
+                    <img src="/icon.ico" alt="AI" class="avatar" />
+                    <div class="bubble assistant-bubble" v-html="formatMessage(msg.content)"></div>
+                </div>
+                <!-- 用户消息（右） -->
+                <div v-else-if="msg.role === 'user'" class="message user">
+                    <div class="bubble user-bubble">{{ msg.content }}</div>
+                </div>
+                <!-- 系统消息（居中） -->
+                <div v-else-if="msg.role === 'system'" class="message system">
+                    <div class="system-text" :class="msg.type" v-html="formatMessage(msg.content)"></div>
+                </div>
+                <!-- 进度消息（居中） -->
+                <div v-else-if="msg.role === 'progress'" class="message system">
+                    <div class="system-text info">{{ msg.content }}</div>
+                </div>
+            </div>
+            <!-- 加载动画 -->
+            <div v-if="isProcessing" class="message assistant">
+                <img src="/icon.ico" alt="AI" class="avatar" />
+                <div class="bubble assistant-bubble thinking">
+                    <span class="dot">•</span><span class="dot">•</span><span class="dot">•</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- ====== 底部：角色选择 + 输入 ====== -->
+        <footer>
+            <!-- 角色选择区 -->
+            <div class="role-selector">
+                <span class="label">参与角色：</span>
+                <button v-for="(role, id) in roles" :key="id"
+                        class="role-chip"
+                        :class="{ active: selectedRoles.includes(id) }"
+                        @click="toggleRole(id)">
+                    {{ role.name || id }}
+                </button>
+                <span v-if="Object.keys(roles).length === 0" class="hint">请先添加角色</span>
+            </div>
+
+            <!-- 输入框 -->
+            <div class="input-wrapper">
+                <input v-model="inputMessage" @keydown.enter="sendMessage"
+                       placeholder="输入任务..."
+                       :disabled="isProcessing || !state.frameworkInstalled || selectedRoles.length === 0" />
+                <button @click="sendMessage" :disabled="isProcessing || !inputMessage.trim() || selectedRoles.length === 0">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="footer-hint">
+                <span v-if="!state.frameworkInstalled">请先安装框架</span>
+                <span v-else-if="!state.hasToken">请配置密钥</span>
+                <span v-else-if="selectedRoles.length === 0">请至少选择一个角色</span>
+                <span v-else>选中的角色将按顺序协作</span>
+            </div>
+        </footer>
+
+        <!-- ====== 角色管理弹窗 ====== -->
+        <div v-if="showRoleManager" class="modal-overlay" @click.self="closeRoleManager">
+            <div class="modal modal-large">
+                <h2>角色管理</h2>
+
+                <!-- 角色列表 -->
+                <div class="role-list">
+                    <div v-for="(role, id) in roles" :key="id" class="role-item">
+                        <div class="role-info">
+                            <strong>{{ role.name || id }}</strong>
+                            <span class="role-prompt">{{ role.systemPrompt.substring(0, 40) }}…</span>
+                            <span class="role-model">{{ role.model }}</span>
+                        </div>
+                        <div class="role-actions">
+                            <button @click="editRole(id)" class="edit-btn">✎</button>
+                            <button @click="deleteRole(id)" class="delete-btn">✕</button>
+                        </div>
+                    </div>
+                    <div v-if="Object.keys(roles).length === 0" class="empty-hint">暂无角色</div>
+                </div>
+
+                <!-- 添加/编辑表单 -->
+                <div v-if="showAddForm" class="role-form">
+                    <input v-model="editForm.name" placeholder="角色名称" />
+                    <textarea v-model="editForm.systemPrompt" placeholder="系统提示词" rows="3"></textarea>
+                    <div class="model-select-wrapper">
+                        <input v-model="editForm.model" placeholder="模型 ID (如 qwen/qwen3.5-plus)" list="model-options" />
+                        <datalist id="model-options">
+                            <option v-for="m in availableModels" :key="m.id" :value="m.id" />
+                        </datalist>
+                        <span class="model-hint">可用模型：{{ availableModels.map(m => m.id).join(', ') || '暂无' }}</span>
+                    </div>
+                    <div class="form-actions">
+                        <button @click="saveRole" class="primary-btn">保存</button>
+                        <button @click="cancelEdit" class="secondary-btn">取消</button>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button @click="showAddForm = !showAddForm" class="primary-btn-sm">
+                        {{ showAddForm ? '取消' : '添加角色' }}
+                    </button>
+                    <button @click="closeRoleManager" class="secondary-btn">关闭</button>
+                </div>
+
+                <!-- ===== 模型管理（折叠） ===== -->
+                <hr class="divider" />
+                <div class="model-section">
+                    <div class="model-header" @click="showModelManager = !showModelManager">
+                        <span>✔ 模型管理</span>
+                        <span class="toggle-arrow">{{ showModelManager ? '▼' : '▶' }}</span>
+                    </div>
+                    <div v-if="showModelManager" class="model-body">
+                        <div v-if="Object.keys(providers).length === 0" class="empty-hint">暂无模型提供商</div>
+                        <div v-for="(prov, name) in providers" :key="name" class="model-item">
+                            <span><strong>{{ name }}</strong></span>
+                            <span v-if="name === 'qwen'" class="badge">默认</span>
+                            <span class="model-ids">{{ (prov.models || []).map(m => m.id).join(', ') }}</span>
+                            <button v-if="name !== 'qwen'" @click="removeProvider(name)" class="delete-btn-small">✕</button>
+                        </div>
+                        <div class="add-model-form">
+                            <input v-model="newModel.name" placeholder="提供商名称 (如 openai)" />
+                            <input v-model="newModel.apiKey" type="password" placeholder="API Key" />
+                            <input v-model="newModel.baseUrl" placeholder="Base URL (可选)" />
+                            <input v-model="newModel.modelIds" placeholder="模型列表 (逗号分隔, 如 gpt-4, gpt-3.5-turbo)" />
+                            <button @click="addNewProvider" :disabled="addingModel" class="primary-btn-sm">
+                                {{ addingModel ? '添加中...' : '添加模型' }}
+                            </button>
+                        </div>
+                        <div v-if="modelMsg" class="model-msg">{{ modelMsg }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== 安装/配置弹窗 ====== -->
+        <div v-if="showSetup" class="modal-overlay" @click.self="closeSetup">
+            <div class="modal">
+                <h2>{{ setupStep === 'install' ? '安装核心框架' : '配置密钥' }}</h2>
+                <p v-if="setupStep === 'install'">点击下方按钮自动安装，约需 1-2 分钟。</p>
+                <p v-else>从 <code>~\.openclaw\openclaw.json</code> 复制 token 粘贴到下方。</p>
+                <div v-if="setupStep === 'install'">
+                    <button @click="doInstallFramework" :disabled="installing" class="primary-btn">
+                        {{ installing ? '安装中...' : '开始安装' }}
+                    </button>
+                    <div v-if="installProgress" class="install-log"><pre>{{ installProgress }}</pre></div>
+                </div>
+                <div v-else>
+                    <input v-model="tokenInput" placeholder="粘贴 token..." class="token-input" />
+                    <button @click="doSetToken" class="primary-btn">保存</button>
+                    <p v-if="tokenError" class="error-msg">{{ tokenError }}</p>
+                </div>
+                <button @click="closeSetup" class="secondary-btn">跳过</button>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script setup>
+import { ref, onMounted, nextTick } from 'vue';
+
+// ============================================
+// 状态
+// ============================================
+const state = ref({ frameworkInstalled: false, hasToken: false, roles: {} });
+const roles = ref({});
+const selectedRoles = ref([]);
+const messages = ref([]);
+const inputMessage = ref('');
+const isProcessing = ref(false);
+const messagesContainer = ref(null);
+
+// ---- 夜间模式 ----
+const darkMode = ref(false);
+
+function toggleDarkMode() {
+    darkMode.value = !darkMode.value;
+    document.documentElement.classList.toggle('dark', darkMode.value);
+    localStorage.setItem('ceciliobot-darkmode', darkMode.value ? 'true' : 'false');
+}
+
+// ---- 角色管理 ----
+const showRoleManager = ref(false);
+const showAddForm = ref(false);
+const editingRoleId = ref(null);
+const editForm = ref({ name: '', systemPrompt: '', model: 'qwen/qwen3.5-plus' });
+const availableModels = ref([]);
+
+// ---- 模型管理 ----
+const providers = ref({});
+const showModelManager = ref(false);
+const newModel = ref({ name: '', apiKey: '', baseUrl: '', modelIds: '' });
+const addingModel = ref(false);
+const modelMsg = ref('');
+
+// ---- 安装/配置 ----
+const showSetup = ref(false);
+const setupStep = ref('install');
+const installing = ref(false);
+const installProgress = ref('');
+const tokenInput = ref('');
+const tokenError = ref('');
+
+// ============================================
+// 初始化
+// ============================================
+onMounted(async () => {
+    // 读取夜间模式偏好
+    const savedDark = localStorage.getItem('ceciliobot-darkmode');
+    if (savedDark === 'true') {
+        darkMode.value = true;
+        document.documentElement.classList.add('dark');
+    }
+
+    const result = await window.electronAPI.getInitialState();
+    if (result.success) {
+        state.value = result;
+        roles.value = result.roles || {};
+        selectedRoles.value = Object.keys(roles.value);
+        await loadModels();
+
+        if (!state.value.frameworkInstalled) {
+            showSetup.value = true;
+            setupStep.value = 'install';
+            addSystemMessage('框架未安装，请点击安装。', 'info');
+        } else if (!state.value.hasToken) {
+            showSetup.value = true;
+            setupStep.value = 'token';
+            addSystemMessage('请配置密钥。', 'info');
+        } else {
+            addSystemMessage('就绪，选择角色并输入任务。', 'info');
+        }
+    }
+});
+
+async function loadModels() {
+    const result = await window.electronAPI.getModels();
+    if (result.success) {
+        availableModels.value = result.models || [];
+        providers.value = result.providers || {};
+    }
+}
+
+async function loadRoles() {
+    const result = await window.electronAPI.getRoles();
+    if (result.success) {
+        roles.value = result.roles || {};
+    }
+}
+
+// ============================================
+// 消息管理
+// ============================================
+function addSystemMessage(content, type = 'info') {
+    messages.value.push({ role: 'system', content, type });
+    scrollToBottom();
+}
+function addUserMessage(content) {
+    messages.value.push({ role: 'user', content });
+    scrollToBottom();
+}
+function addAssistantMessage(content) {
+    messages.value.push({ role: 'assistant', content });
+    scrollToBottom();
+}
+function addProgressMessage(content) {
+    messages.value.push({ role: 'progress', content });
+    scrollToBottom();
+}
+function scrollToBottom() {
+    nextTick(() => {
+        if (messagesContainer.value) {
+            messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+        }
+    });
+}
+function formatMessage(content) {
+    return content.replace(/\n/g, '<br>');
+}
+
+// ============================================
+// 角色选择
+// ============================================
+function toggleRole(id) {
+    const idx = selectedRoles.value.indexOf(id);
+    if (idx > -1) {
+        selectedRoles.value.splice(idx, 1);
+    } else {
+        selectedRoles.value.push(id);
+    }
+    if (selectedRoles.value.length === 0) {
+        selectedRoles.value.push(id);
+    }
+}
+
+// ============================================
+// 发送消息（使用选中的角色）
+// ============================================
+async function sendMessage() {
+    if (!inputMessage.value.trim() || isProcessing.value) return;
+    if (!state.value.frameworkInstalled || !state.value.hasToken) {
+        showSetup.value = true;
+        return;
+    }
+    if (selectedRoles.value.length === 0) {
+        addSystemMessage('请至少选择一个角色。', 'error');
+        return;
+    }
+
+    const userMsg = inputMessage.value.trim();
+    addUserMessage(userMsg);
+    inputMessage.value = '';
+    isProcessing.value = true;
+
+    window.electronAPI.onChatProgress((msg) => {
+        if (msg.startsWith('✔')) {
+            const last = messages.value[messages.value.length - 1];
+            if (last && last.role === 'progress') {
+                messages.value.pop();
+            }
+            addSystemMessage(msg.replace('✔', '').trim(), 'success');
+        } else {
+            addProgressMessage(msg);
+        }
+    });
+
+    try {
+        const result = await window.electronAPI.runSelectedAgents({
+            goal: userMsg,
+            roleIds: selectedRoles.value
+        });
+
+        if (result.success) {
+            const labels = result.steps.map((s, i) => `${i+1}. ${s}`).join(' → ');
+            addSystemMessage(`已启动协作：${labels}`, 'info');
+            addAssistantMessage(result.finalOutput || '（无输出）');
+            if (result.reportPath) {
+                addSystemMessage(`报告已保存：${result.reportPath}`, 'info');
+            }
+        } else {
+            addSystemMessage('执行失败：' + result.error, 'error');
+        }
+    } catch (e) {
+        addSystemMessage('出错：' + e.message, 'error');
+    } finally {
+        isProcessing.value = false;
+        scrollToBottom();
+    }
+}
+
+// ============================================
+// 角色管理
+// ============================================
+function openRoleManager() {
+    showRoleManager.value = true;
+    showAddForm.value = false;
+    editingRoleId.value = null;
+    editForm.value = { name: '', systemPrompt: '', model: 'qwen/qwen3.5-plus' };
+    loadModels();
+}
+function closeRoleManager() {
+    showRoleManager.value = false;
+}
+function editRole(id) {
+    editingRoleId.value = id;
+    const role = roles.value[id];
+    editForm.value = { ...role };
+    showAddForm.value = true;
+    loadModels();
+}
+function cancelEdit() {
+    showAddForm.value = false;
+    editingRoleId.value = null;
+    editForm.value = { name: '', systemPrompt: '', model: 'qwen/qwen3.5-plus' };
+}
+async function saveRole() {
+    if (!editForm.value.name.trim() || !editForm.value.systemPrompt.trim()) {
+        alert('名称和提示词不能为空');
+        return;
+    }
+    const id = editingRoleId.value || editForm.value.name.trim().toLowerCase().replace(/\s/g, '_');
+    const roleData = {
+        name: editForm.value.name.trim(),
+        systemPrompt: editForm.value.systemPrompt.trim(),
+        model: editForm.value.model.trim() || 'qwen/qwen3.5-plus'
+    };
+    const result = await window.electronAPI.saveRole({ id, role: roleData });
+    if (result.success) {
+        await loadRoles();
+        if (selectedRoles.value.length === 0) {
+            selectedRoles.value = Object.keys(roles.value);
+        }
+        if (!selectedRoles.value.includes(id)) {
+            selectedRoles.value.push(id);
+        }
+        cancelEdit();
+    } else {
+        alert('保存失败：' + result.error);
+    }
+}
+async function deleteRole(id) {
+    if (!confirm(`确定删除角色 "${roles.value[id]?.name || id}" 吗？`)) return;
+    const result = await window.electronAPI.deleteRole(id);
+    if (result.success) {
+        await loadRoles();
+        const idx = selectedRoles.value.indexOf(id);
+        if (idx > -1) selectedRoles.value.splice(idx, 1);
+        if (selectedRoles.value.length === 0 && Object.keys(roles.value).length > 0) {
+            selectedRoles.value = Object.keys(roles.value);
+        }
+    } else {
+        alert('删除失败：' + result.error);
+    }
+}
+
+// ============================================
+// 模型管理
+// ============================================
+async function addNewProvider() {
+    if (!newModel.value.name || !newModel.value.apiKey || !newModel.value.modelIds) {
+        modelMsg.value = '请填写完整信息';
+        return;
+    }
+    addingModel.value = true;
+    modelMsg.value = '';
+    try {
+        const result = await window.electronAPI.addProvider({
+            name: newModel.value.name.trim(),
+            apiKey: newModel.value.apiKey.trim(),
+            baseUrl: newModel.value.baseUrl.trim(),
+            modelIds: newModel.value.modelIds.trim()
+        });
+        if (result.success) {
+            modelMsg.value = '✔ 添加成功';
+            await loadModels();
+            newModel.value = { name: '', apiKey: '', baseUrl: '', modelIds: '' };
+        } else {
+            modelMsg.value = '❌ ' + result.error;
+        }
+    } catch (e) {
+        modelMsg.value = '❌ ' + e.message;
+    } finally {
+        addingModel.value = false;
+    }
+}
+async function removeProvider(name) {
+    if (!confirm(`确定删除模型提供商 "${name}" 吗？`)) return;
+    try {
+        const result = await window.electronAPI.removeProvider(name);
+        if (result.success) {
+            modelMsg.value = '✔ 已删除';
+            await loadModels();
+        } else {
+            modelMsg.value = '❌ ' + result.error;
+        }
+    } catch (e) {
+        modelMsg.value = '❌ ' + e.message;
+    }
+}
+
+// ============================================
+// 安装 & Token
+// ============================================
+async function doInstallFramework() {
+    installing.value = true;
+    installProgress.value = '';
+    window.electronAPI.onInstallProgress((msg) => {
+        installProgress.value += msg + '\n';
+    });
+    try {
+        const result = await window.electronAPI.installFramework();
+        if (result.success) {
+            state.value.frameworkInstalled = true;
+            addSystemMessage('✔ 框架安装完成！', 'success');
+            setupStep.value = 'token';
+        }
+    } catch (e) {
+        installProgress.value += '❌ 安装失败: ' + (e.error || e.message);
+    } finally {
+        installing.value = false;
+    }
+}
+async function doSetToken() {
+    if (!tokenInput.value.trim()) {
+        tokenError.value = '请粘贴有效的密钥';
+        return;
+    }
+    const result = await window.electronAPI.setToken(tokenInput.value.trim());
+    if (result.success) {
+        state.value.hasToken = true;
+        showSetup.value = false;
+        addSystemMessage('✔ 密钥配置成功！', 'success');
+        tokenError.value = '';
+    } else {
+        tokenError.value = '保存失败：' + result.error;
+    }
+}
+function closeSetup() {
+    if (state.value.frameworkInstalled && state.value.hasToken) {
+        showSetup.value = false;
+    }
+}
+</script>
+
+<style>
+/* ===== 全局重置 ===== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+    background: #ffffff;
+}
+
+/* ===== 亮色模式 ===== */
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 900px;
+    margin: 0 auto;
+    background: #ffffff;
+    box-shadow: 0 0 40px rgba(0,0,0,0.05);
+}
+
+/* ===== Header ===== */
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid #e5e5e5;
+    background: #ffffff;
+    flex-shrink: 0;
+}
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 32px; height: 32px; border-radius: 6px; }
+.title { font-size: 18px; font-weight: 700; color: #2d2d2d; }
+.status { display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.status-dot.green { background: #10a37f; }
+.status-dot.red { background: #ef4444; }
+.status-text { font-size: 13px; color: #6b7280; }
+.manage-btn {
+    background: none;
+    border: none;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+.manage-btn:hover { background: #f0f0f0; color: #5436da; }
+
+/* ===== 夜间模式切换按钮 ===== */
+.dark-toggle {
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    color: #6b7280;
+    transition: all 0.2s;
+}
+.dark-toggle:hover {
+    background: #f0f0f0;
+    color: #2d2d2d;
+}
+
+/* ===== Main ===== */
+main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 20px 8px;
+    scroll-behavior: smooth;
+}
+.message-wrapper { margin-bottom: 14px; }
+.message { display: flex; align-items: flex-start; gap: 12px; }
+.message.assistant { justify-content: flex-start; }
+.message.user { justify-content: flex-end; }
+.message.system { justify-content: center; }
+
+.avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #f0f0f0;
+    padding: 2px;
+    object-fit: contain;
+}
+.bubble {
+    padding: 10px 16px;
+    border-radius: 16px;
+    font-size: 15px;
+    line-height: 1.6;
+    max-width: 80%;
+    word-wrap: break-word;
+}
+.assistant-bubble {
+    background: #f7f7f8;
+    color: #2d2d2d;
+    border: 1px solid #e5e5e5;
+}
+.user-bubble {
+    background: #5436da;
+    color: white;
+    border-radius: 16px 16px 4px 16px;
+}
+.system-text {
+    font-size: 14px;
+    padding: 6px 16px;
+    border-radius: 20px;
+    max-width: 80%;
+    line-height: 1.5;
+    text-align: center;
+}
+.system-text.success { color: #10a37f; background: #e6f9f0; }
+.system-text.error { color: #ef4444; background: #fee9e9; }
+.system-text.info { color: #6b7280; background: #f7f7f8; }
+
+.thinking .dot {
+    display: inline-block;
+    animation: bounce 1.4s infinite;
+    font-size: 20px;
+    margin: 0 2px;
+    color: #6b7280;
+}
+.thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+}
+
+/* ===== Footer ===== */
+footer {
+    padding: 12px 20px 20px;
+    border-top: 1px solid #e5e5e5;
+    background: #ffffff;
+    flex-shrink: 0;
+}
+.role-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0 10px;
+    align-items: center;
+}
+.role-selector .label {
+    font-size: 13px;
+    color: #6b7280;
+    margin-right: 4px;
+}
+.role-chip {
+    padding: 4px 14px;
+    border-radius: 16px;
+    border: 1px solid #ddd;
+    background: #f7f7f8;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+.role-chip.active {
+    background: #5436da;
+    color: white;
+    border-color: #5436da;
+}
+.role-chip:hover { opacity: 0.8; }
+.hint { color: #999; font-size: 13px; }
+
+.input-wrapper {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: #f7f7f8;
+    border-radius: 12px;
+    padding: 4px 4px 4px 16px;
+    border: 1px solid #e5e5e5;
+    transition: border-color 0.2s;
+}
+.input-wrapper:focus-within { border-color: #5436da; }
+.input-wrapper input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 12px 0;
+    font-size: 15px;
+    outline: none;
+    color: #2d2d2d;
+}
+.input-wrapper input::placeholder { color: #9ca3af; }
+.input-wrapper button {
+    background: #5436da;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+.input-wrapper button:hover:not(:disabled) { background: #4329b3; }
+.input-wrapper button:disabled { background: #c4b5fd; cursor: not-allowed; }
+.input-wrapper button svg { width: 18px; height: 18px; }
+
+.footer-hint { margin-top: 8px; font-size: 12px; color: #9ca3af; text-align: center; }
+
+/* ===== Modal ===== */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal {
+    background: white;
+    border-radius: 20px;
+    padding: 32px;
+    max-width: 560px;
+    width: 92%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+}
+.modal-large { max-width: 700px; }
+.modal h2 { font-size: 22px; color: #2d2d2d; margin-bottom: 16px; }
+.modal p { color: #6b7280; font-size: 14px; line-height: 1.6; margin-bottom: 16px; }
+.modal code { background: #f3f4f6; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+
+.primary-btn {
+    background: #5436da;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.primary-btn:hover:not(:disabled) { background: #4329b3; }
+.primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.primary-btn-sm {
+    background: #5436da;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.primary-btn-sm:hover:not(:disabled) { background: #4329b3; }
+.secondary-btn {
+    background: transparent;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 10px 24px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.secondary-btn:hover { background: #f5f5f5; }
+
+.token-input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid #e5e5e5;
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 12px;
+    outline: none;
+    font-family: monospace;
+}
+.token-input:focus { border-color: #5436da; }
+
+.install-log {
+    margin-top: 12px;
+    background: #1e1e1e;
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+.install-log pre { color: #10a37f; font-size: 12px; margin: 0; white-space: pre-wrap; word-break: break-all; }
+.error-msg { color: #ef4444; font-size: 13px; margin-top: 8px; }
+
+/* ===== 角色管理样式 ===== */
+.role-list { margin-bottom: 16px; }
+.role-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f9f9f9;
+    border-radius: 8px;
+    margin-bottom: 6px;
+}
+.role-info { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.role-prompt { color: #6b7280; font-size: 13px; }
+.role-model { background: #e8e8e8; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: #555; }
+.role-actions { display: flex; gap: 4px; }
+.edit-btn, .delete-btn {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+.edit-btn:hover { background: #e8e8e8; }
+.delete-btn:hover { background: #fee9e9; color: #ef4444; }
+.delete-btn-small {
+    border: none;
+    background: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+}
+.delete-btn-small:hover { color: #ef4444; }
+
+.role-form {
+    background: #f5f5f5;
+    padding: 16px;
+    border-radius: 10px;
+    margin: 12px 0;
+}
+.role-form input, .role-form textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 10px;
+    font-family: inherit;
+}
+.role-form textarea { resize: vertical; }
+.model-select-wrapper input { margin-bottom: 4px; }
+.model-hint { font-size: 12px; color: #999; display: block; margin-bottom: 10px; }
+.form-actions { display: flex; gap: 10px; margin-top: 8px; }
+
+.modal-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.divider { border: none; border-top: 1px solid #eee; margin: 18px 0; }
+
+/* ===== 模型管理样式 ===== */
+.model-section { margin-top: 4px; }
+.model-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    padding: 8px 0;
+    user-select: none;
+}
+.model-header:hover { color: #5436da; }
+.toggle-arrow { font-size: 14px; color: #999; }
+.model-body { padding: 8px 0; }
+.model-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: #f9f9f9;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+.model-ids { color: #6b7280; font-size: 13px; }
+.badge {
+    background: #10a37f;
+    color: white;
+    padding: 1px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+}
+.empty-hint { color: #999; font-size: 14px; padding: 12px 0; text-align: center; }
+.add-model-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+.add-model-form input {
+    flex: 1;
+    min-width: 120px;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+}
+.add-model-form input:first-child { min-width: 100px; }
+.model-msg { margin-top: 8px; font-size: 13px; color: #10a37f; }
+
+/* ===== Responsive ===== */
+@media (max-width: 600px) {
+    .app { max-width: 100%; }
+    header { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+    main { padding: 12px; }
+    footer { padding: 10px 14px 14px; }
+    .modal { padding: 20px; max-width: 96%; }
+    .bubble { max-width: 90%; font-size: 14px; }
+    .role-info { flex-wrap: wrap; }
+    .role-chip { font-size: 12px; padding: 3px 10px; }
+    .add-model-form input { min-width: 80px; }
+}
+
+/* ============================================================
+   夜间模式 - 纯黑无白边
+   ============================================================ */
+.dark {
+    background: #000000 !important;
+}
+.dark .app {
+    background: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+.dark header {
+    background: #000000 !important;
+    border-bottom: 1px solid #1a1a1a !important;
+}
+.dark .title {
+    color: #e8e8e8 !important;
+}
+.dark .status-text {
+    color: #888 !important;
+}
+.dark main {
+    background: #000000 !important;
+}
+.dark .avatar {
+    background: #1a1a1a !important;
+}
+.dark .assistant-bubble {
+    background: #1a1a1a !important;
+    color: #e8e8e8 !important;
+    border: 1px solid #2a2a2a !important;
+}
+.dark .user-bubble {
+    background: #2a1a5a !important;
+    color: #f0f0f0 !important;
+}
+.dark .system-text.info {
+    color: #888 !important;
+    background: #0d0d0d !important;
+}
+.dark .system-text.success {
+    color: #4ade80 !important;
+    background: #0a1a0a !important;
+}
+.dark .system-text.error {
+    color: #f87171 !important;
+    background: #1a0a0a !important;
+}
+.dark footer {
+    background: #000000 !important;
+    border-top: 1px solid #1a1a1a !important;
+}
+.dark .input-wrapper {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+}
+.dark .input-wrapper input {
+    background: transparent !important;
+    color: #e8e8e8 !important;
+}
+.dark .input-wrapper input::placeholder {
+    color: #555 !important;
+}
+.dark .role-selector .label {
+    color: #888 !important;
+}
+.dark .role-chip {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+    color: #ccc !important;
+}
+.dark .role-chip.active {
+    background: #5436da !important;
+    color: white !important;
+    border-color: #5436da !important;
+}
+.dark .footer-hint {
+    color: #555 !important;
+}
+.dark .modal-overlay {
+    background: rgba(0, 0, 0, 0.85) !important;
+}
+.dark .modal {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+    box-shadow: none !important;
+}
+.dark .modal h2 {
+    color: #e8e8e8 !important;
+}
+.dark .modal p {
+    color: #888 !important;
+}
+.dark .modal code {
+    background: #1a1a1a !important;
+    color: #ccc !important;
+}
+.dark .role-item {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+}
+.dark .role-info strong {
+    color: #e8e8e8 !important;
+}
+.dark .role-prompt {
+    color: #888 !important;
+}
+.dark .role-model {
+    background: #1a1a1a !important;
+    color: #aaa !important;
+}
+.dark .role-form {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+}
+.dark .role-form input,
+.dark .role-form textarea {
+    background: #000000 !important;
+    border-color: #1a1a1a !important;
+    color: #e8e8e8 !important;
+}
+.dark .role-form input::placeholder,
+.dark .role-form textarea::placeholder {
+    color: #555 !important;
+}
+.dark .model-item {
+    background: #0d0d0d !important;
+    border: 1px solid #1a1a1a !important;
+}
+.dark .model-item strong {
+    color: #e8e8e8 !important;
+}
+.dark .model-ids {
+    color: #888 !important;
+}
+.dark .add-model-form input {
+    background: #000000 !important;
+    border-color: #1a1a1a !important;
+    color: #e8e8e8 !important;
+}
+.dark .add-model-form input::placeholder {
+    color: #555 !important;
+}
+.dark .model-msg {
+    color: #4ade80 !important;
+}
+.dark .divider {
+    border-top-color: #1a1a1a !important;
+}
+.dark .manage-btn {
+    color: #888 !important;
+}
+.dark .manage-btn:hover {
+    color: #fff !important;
+    background: #1a1a1a !important;
+}
+.dark .edit-btn {
+    color: #888 !important;
+}
+.dark .edit-btn:hover {
+    background: #1a1a1a !important;
+}
+.dark .delete-btn {
+    color: #888 !important;
+}
+.dark .delete-btn:hover {
+    background: #1a0a0a !important;
+    color: #f87171 !important;
+}
+.dark .secondary-btn {
+    border-color: #1a1a1a !important;
+    color: #888 !important;
+}
+.dark .secondary-btn:hover {
+    background: #1a1a1a !important;
+}
+.dark .empty-hint {
+    color: #555 !important;
+}
+.dark .hint {
+    color: #555 !important;
+}
+.dark .model-header:hover {
+    color: #8b6bf0 !important;
+}
+.dark .badge {
+    background: #1a3a2a !important;
+}
+.dark .thinking .dot {
+    color: #555 !important;
+}
+.dark .status-dot.green {
+    background: #4ade80 !important;
+}
+.dark .status-dot.red {
+    background: #f87171 !important;
+}
+.dark .dark-toggle {
+    color: #888 !important;
+}
+.dark .dark-toggle:hover {
+    background: #1a1a1a !important;
+    color: #fff !important;
+}
+.dark .install-log {
+    background: #000000 !important;
+}
+.dark .install-log pre {
+    color: #4ade80 !important;
+}
+.dark .token-input {
+    background: #000000 !important;
+    border-color: #1a1a1a !important;
+    color: #e8e8e8 !important;
+}
+.dark .token-input:focus {
+    border-color: #5436da !important;
+}
+.dark .error-msg {
+    color: #f87171 !important;
+}
+.dark .model-select-wrapper .model-hint {
+    color: #555 !important;
+}
+.dark .delete-btn-small {
+    color: #555 !important;
+}
+.dark .delete-btn-small:hover {
+    color: #f87171 !important;
+}
+.dark .logo-icon {
+    background: #0d0d0d !important;
+}
+</style>
