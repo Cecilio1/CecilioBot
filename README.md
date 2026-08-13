@@ -53,8 +53,10 @@ ceciliobot 是一个桌面应用，让你通过**自然对话**来编排多个 A
 1. 双击运行 `ceciliobot.exe`，如果没有配置Openclaw环境请先运行`install.exe`
 2. 输入序列号（Token）激活
 3. 在「角色管理」中添加自定义角色或使用默认角色
-4. 选择参与协作的角色，输入任务，发送
-5. 添加额外的LLM API
+   ![如图所示](screenshots/roles.png)
+5. 选择参与协作的角色，输入任务，发送
+6. 添加额外的LLM API
+   ![如图所示](screenshots/ai.png)
    
 ### 从源码构建
 
