@@ -1,7 +1,7 @@
 {
   "name": "ceciliobot",
   "version": "1.0.0",
-  "description": "Ceciliobot - Built For Those Who Dare",
+  "description": "Ceciliobot - Shipped By Oscar",
   "main": "main.js",
   "scripts": {
     "dev": "cd frontend && npm run dev",
