@@ -17,17 +17,16 @@ ceciliobot 是一个桌面应用，让你通过**自然对话**来编排多个 A
 
 ---
 
-## ✨ 核心功能
+## 核心功能
 
 | 功能 | 说明 |
 |------|------|
-| 💬 **纯对话交互** | 像 ChatGPT 一样自然对话，但背后是多 Agent 协作 |
+| 💬 **纯对话交互** | 像现有的大语言模型一样自然对话，但背后是多 Agent 协作 |
 | 🧠 **自定义角色** | 任意添加、编辑、删除 AI 角色，每个角色独立设置提示词和模型 |
 | 🤖 **多模型支持** | 内置 qwen，支持添加 OpenAI、DeepSeek 等任意兼容模型 |
 | 🔗 **协作工作流** | 选择多个角色，按顺序自动接力完成任务 |
-| 🌙 **暗色/亮色模式** | 一键切换，纯黑暗色护眼 |
 | 🚀 **一键安装** | 首次启动自动安装核心框架，无需手动配置 |
-| 🔑 **序列号激活** | 简单输入序列号即可激活，无复杂技术术语 |
+| 🔑 **OpenClaw协同** | 支持本地OpenClaw部署运营，让AI的功能不再停留在网页，实实在在的出现在你的电脑上 |
 
 ---
 
@@ -45,25 +44,25 @@ ceciliobot 是一个桌面应用，让你通过**自然对话**来编排多个 A
 
 ### 下载安装
 
-从 [Releases](https://github.com/yourusername/ceciliobot/releases) 下载最新版本：
+从 [Releases](https://github.com/Cecilio1/CecilioBot/releases) 下载最新版本：
 
-- `ceciliobot Setup x.x.x.exe` — 安装版（推荐）
-- `ceciliobot x.x.x.exe` — 便携版（免安装）
+- `Setup.exe` — 安装版（推荐）
+- `ceciliobot.exe` — 便携版（免安装）
 
 ### 首次使用
 
-1. 双击运行 `ceciliobot.exe`
-2. 如果提示安装核心框架，点击「开始安装」（自动静默安装，约 1-2 分钟）
-3. 输入序列号（Token）激活
-4. 在「角色管理」中添加自定义角色或使用默认角色
-5. 选择参与协作的角色，输入任务，发送
-
+1. 双击运行 `ceciliobot.exe`，如果没有配置Openclaw环境请先运行`install.exe`
+2. 输入序列号（Token）激活
+3. 在「角色管理」中添加自定义角色或使用默认角色
+4. 选择参与协作的角色，输入任务，发送
+5. 添加额外的LLM API
+   
 ### 从源码构建
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/ceciliobot.git
-cd ceciliobot
+git clone https://github.com/Cecilio1/CecilioBot.git
+cd CecilioBot
 
 # 安装依赖
 npm install
@@ -72,5 +71,3 @@ cd frontend && npm install && cd ..
 # 开发模式
 npm run electron:dev
 
-# 打包 Windows 安装包
-npm run build:win
